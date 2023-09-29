@@ -1,0 +1,2 @@
+std_msgs/Header header
+mav_trajectory_generation_ros2/PolynomialSegment[] segments

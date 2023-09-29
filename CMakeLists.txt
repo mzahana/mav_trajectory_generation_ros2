@@ -21,14 +21,25 @@ find_package(Eigen3 REQUIRED)
 find_package(eigen3_cmake_module REQUIRED)
 
 find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 find_package(glog REQUIRED)  # <-- Find glog
+
+find_package(rosidl_default_generators REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/PolynomialSegment.msg"
+  "msg/PolynomialSegment4D.msg"
+  "msg/PolynomialTrajectory.msg"
+  "msg/PolynomialTrajectory4D.msg"
+  DEPENDENCIES std_msgs builtin_interfaces # Add packages that above messages depend on, in this case geometry_msgs for Sphere.msg
+)
 
 # If you have other ROS 2 dependencies, find them here:
 # find_package(dependency_name REQUIRED)
 
 # Libraries
-add_library(${PROJECT_NAME}
+add_library(${PROJECT_NAME}_lib
   src/motion_defines.cpp
   src/polynomial.cpp
   src/segment.cpp
@@ -39,22 +50,22 @@ add_library(${PROJECT_NAME}
   src/io.cpp
   src/rpoly/rpoly_ak1.cpp
 )
-ament_target_dependencies(${PROJECT_NAME} yaml_cpp_vendor Eigen3 geometry_msgs)
+ament_target_dependencies(${PROJECT_NAME}_lib yaml_cpp_vendor Eigen3 geometry_msgs)
 
-target_include_directories(${PROJECT_NAME} PUBLIC
+target_include_directories(${PROJECT_NAME}_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${EIGEN3_INCLUDE_DIR}
 )
 
 # Link against glog
-target_link_libraries(${PROJECT_NAME} glog::glog)  # <-- Link glog
+target_link_libraries(${PROJECT_NAME}_lib glog::glog)  # <-- Link glog
 
 # Executables
 add_executable(polynomial_timing_evaluation
   src/polynomial_timing_evaluation.cpp
 )
-target_link_libraries(polynomial_timing_evaluation ${PROJECT_NAME} glog::glog)  # <-- Link glog
+target_link_libraries(polynomial_timing_evaluation ${PROJECT_NAME}_lib glog::glog)  # <-- Link glog
 
 
 if(BUILD_TESTING)
@@ -72,9 +83,9 @@ endif()
 
 ament_export_dependencies(rosidl_default_runtime glog)  # <-- Export glog
 ament_export_include_directories(include)
-ament_export_libraries(${PROJECT_NAME})
+ament_export_libraries(${PROJECT_NAME}_lib)
 
-install(TARGETS ${PROJECT_NAME}
+install(TARGETS ${PROJECT_NAME}_lib
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
