@@ -18,11 +18,17 @@ def generate_launch_description():
             default_value=default_yaml_path,
             description='Path to the config file.'
         ),
+        DeclareLaunchArgument(
+            'waypoint_node_namespace',
+            default_value='',
+            description='waypoint_node_namespace'
+        ),
 
         Node(
             package=pkg_name,
             executable='go_to_waypoint_node',
             name='go_to_waypoint_node',
+            namespace='',
             parameters=[LaunchConfiguration('config_file')],
             remappings=[
                 ('odom', 'mavros/local_position/odom'),
