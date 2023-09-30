@@ -32,7 +32,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PolynomialSegment4D.msg"
   "msg/PolynomialTrajectory.msg"
   "msg/PolynomialTrajectory4D.msg"
-  DEPENDENCIES std_msgs builtin_interfaces # Add packages that above messages depend on, in this case geometry_msgs for Sphere.msg
+  "msg/Waypoint.msg"
+  DEPENDENCIES std_msgs geometry_msgs builtin_interfaces # Add packages that above messages depend on, in this case geometry_msgs for Sphere.msg
 )
 
 # If you have other ROS 2 dependencies, find them here:
