@@ -72,8 +72,6 @@ private:
   mav_trajectory_generation::Trajectory yaw_trajectory_;
   mav_trajectory_generation::Vertex::Vector yaw_vertices_;
 
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_sub_;
-
   // Interpolates intermediate points between waypoints in a sequence.
   void addIntermediateWaypoints();
 
@@ -92,6 +90,9 @@ private:
   void odometryCallback(const nav_msgs::msg::Odometry& odometry_message);
   void waypointCallback(const mav_trajectory_generation_ros2::msg::Waypoint& wp_msg);
 
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_sub_;
+  rclcpp::Subscription<mav_trajectory_generation_ros2::msg::Waypoint>::SharedPtr waypoint_sub_;
+  
   rclcpp::Publisher<mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D>::SharedPtr  path_segments_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr polynomial_pub_;
 
@@ -125,6 +126,8 @@ got_odometry_(false)
 
   odometry_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
       "odom", rclcpp::SensorDataQoS(), std::bind(&GoToWaypointNode::odometryCallback, this, _1));
+  waypoint_sub_ = this->create_subscription<mav_trajectory_generation_ros2::msg::Waypoint>(
+      "waypoint", 10, std::bind(&GoToWaypointNode::waypointCallback, this, _1));
 
   path_segments_pub_ = this->create_publisher<mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D>("path_segments", 10);
   polynomial_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("waypoint_navigator_polynomial_markers", 10);
