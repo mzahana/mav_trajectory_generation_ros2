@@ -11,6 +11,9 @@
 #include <geometry_msgs/msg/point.hpp>
 #include <mav_trajectory_generation_ros2/msg/polynomial_trajectory4_d.hpp>
 #include <mav_trajectory_generation_ros2/ros_conversions.h>
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
+#include <mav_trajectory_generation_ros2/msg/waypoint.hpp>
 
 using namespace std::chrono_literals;
 using std::placeholders::_1;
@@ -45,8 +48,16 @@ private:
   // Maximum distance between poses [m].
   double intermediate_pose_separation_;
 
+  // Maximum speed (m/s).
+  double reference_speed_;
+  // Maximum acceleration (m/s^2).
+  double reference_acceleration_;
+
   bool got_odometry_;
   mav_msgs::EigenOdometry odometry_;
+
+  // Polynomial trajectory markers.
+  visualization_msgs::msg::MarkerArray markers_;
 
   // Path execution state (for pose publishing).
   size_t current_leg_;
@@ -79,30 +90,67 @@ private:
   void deletePolynomialMarkers();
 
   void odometryCallback(const nav_msgs::msg::Odometry& odometry_message);
-  void waypointCallback(const geometry_msgs::msg::Point& point_msg);
+  void waypointCallback(const mav_trajectory_generation_ros2::msg::Waypoint& wp_msg);
 
   rclcpp::Publisher<mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D>::SharedPtr  path_segments_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr polynomial_pub_;
 
 };
 
 ////////////////////////////////// Class definition ///////////////////////
+
+// const double GoToWaypointNode::kCommandTimerFrequency = 5.0;
+const double GoToWaypointNode::kWaypointAchievementDistance = 0.5;
+const double GoToWaypointNode::kIntermediatePoseTolerance = 0.1;
+const int GoToWaypointNode::kDimensions = 3;
+const int GoToWaypointNode::kDerivativeToOptimize =
+    mav_trajectory_generation::derivative_order::ACCELERATION;
+const int GoToWaypointNode::kPolynomialCoefficients = 10;
+
 GoToWaypointNode::GoToWaypointNode() : Node("go_to_waypoint_node"),
 got_odometry_(false)
 {
 
   // Get ros2 params
+  // @todo Implement
+  this->declare_parameter("heading_mode", "auto");
+  heading_mode_ = this->get_parameter("heading_mode").get_parameter_value().get<std::string>();
+
+  this->declare_parameter("intermediate_poses", true);
+  intermediate_poses_ = this->get_parameter("intermediate_poses").get_parameter_value().get<bool>();
+
+  this->declare_parameter("intermediate_pose_separation", 1.0); // meters
+  intermediate_pose_separation_ = this->get_parameter("intermediate_pose_separation").get_parameter_value().get<double>();
+  
 
   odometry_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
       "odom", rclcpp::SensorDataQoS(), std::bind(&GoToWaypointNode::odometryCallback, this, _1));
 
   path_segments_pub_ = this->create_publisher<mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D>("path_segments", 10);
+  polynomial_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("waypoint_navigator_polynomial_markers", 10);
+
+  RCLCPP_INFO(this->get_logger(), "Node has started.");
 
 }
 
 GoToWaypointNode::~GoToWaypointNode() {/* Destructor*/}
 
-void GoToWaypointNode::waypointCallback(const geometry_msgs::msg::Point& point_msg)
+void GoToWaypointNode::odometryCallback(const nav_msgs::msg::Odometry& odom_msg)
 {
+  if (!got_odometry_) {
+    got_odometry_ = true;
+  }
+  mav_msgs::eigenOdometryFromMsg(odom_msg, &odometry_);
+}
+
+void GoToWaypointNode::waypointCallback(const mav_trajectory_generation_ros2::msg::Waypoint& wp_msg)
+{
+  if (!got_odometry_) {
+    auto clock = this->get_clock();
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *clock, 1000, "[GoToWaypointNode::waypointCallback] Did no get odometry. Not executing waypoint.");
+    return;
+  }
+
   coarse_waypoints_.clear();
   current_leg_ = 0;
   // timer_counter_ = 0;
@@ -112,17 +160,22 @@ void GoToWaypointNode::waypointCallback(const geometry_msgs::msg::Point& point_m
 
   // Add the new waypoint.
   mav_msgs::EigenTrajectoryPoint vwp;
-  vwp.position_W.x() = point_msg.x;
-  vwp.position_W.y() = point_msg.y;
-  vwp.position_W.z() = point_msg.z;
+  vwp.position_W.x() = wp_msg.position.x;
+  vwp.position_W.y() = wp_msg.position.y;
+  vwp.position_W.z() = wp_msg.position.z;
+  auto acc_vec = mav_msgs::vector3FromPointMsg(wp_msg.acceleration);
+  reference_acceleration_ = acc_vec.norm();
+  auto vel_vec = mav_msgs::vector3FromPointMsg(wp_msg.velocity);
+  reference_speed_ = vel_vec.norm();
+
   if (heading_mode_ == "zero") {
     vwp.setFromYaw(0.0);
-  } else if (sqrt(pow(point_msg.y - odometry_.position_W.y(), 2) +
-                  pow(point_msg.x - odometry_.position_W.x(), 2)) < 0.05) {
+  } else if (sqrt(pow(wp_msg.position.y - odometry_.position_W.y(), 2) +
+                  pow(wp_msg.position.x - odometry_.position_W.x(), 2)) < 0.05) {
     vwp.orientation_W_B = odometry_.orientation_W_B;
   } else {
-    vwp.setFromYaw(atan2(point_msg.y - odometry_.position_W.y(),
-                        point_msg.x - odometry_.position_W.x()));
+    vwp.setFromYaw(atan2(wp_msg.position.y - odometry_.position_W.y(),
+                        wp_msg.position.x - odometry_.position_W.x()));
   }
   coarse_waypoints_.push_back(vwp);
 
@@ -216,8 +269,59 @@ void GoToWaypointNode::createTrajectory()
   yaw_opt.getTrajectory(&yaw_trajectory_);
 }
 
+void GoToWaypointNode::addIntermediateWaypoints()
+{
+  for (size_t i = 1; i < coarse_waypoints_.size(); ++i) {
+    mav_msgs::EigenTrajectoryPoint wpa = coarse_waypoints_[i - 1];
+    mav_msgs::EigenTrajectoryPoint wpb = coarse_waypoints_[i];
+    double dist = (wpa.position_W - wpb.position_W).norm();
 
+    // Minimum tolerance between points set to avoid subsequent numerical errors
+    // in trajectory optimization.
+    while (dist > intermediate_pose_separation_ &&
+           dist > kIntermediatePoseTolerance) {
+      mav_msgs::EigenTrajectoryPoint iwp;
+      iwp.position_W.x() = wpa.position_W.x() +
+                           (intermediate_pose_separation_ / dist) *
+                               (wpb.position_W.x() - wpa.position_W.x());
+      iwp.position_W.y() = wpa.position_W.y() +
+                           (intermediate_pose_separation_ / dist) *
+                               (wpb.position_W.y() - wpa.position_W.y());
+      iwp.position_W.z() = wpa.position_W.z() +
+                           (intermediate_pose_separation_ / dist) *
+                               (wpb.position_W.z() - wpa.position_W.z());
+      iwp.orientation_W_B = wpb.orientation_W_B;
+      coarse_waypoints_.insert(coarse_waypoints_.begin() + i, iwp);
+      wpa = iwp;
+      dist = (wpa.position_W - wpb.position_W).norm();
+      i++;
+    }
+  }
+}
+
+void GoToWaypointNode::addCurrentOdometryWaypoint()
+{
+  mav_msgs::EigenTrajectoryPoint vwp;
+  vwp.position_W = odometry_.position_W;
+  vwp.orientation_W_B = odometry_.orientation_W_B;
+  coarse_waypoints_.push_back(vwp);
+}
 void GoToWaypointNode::deletePolynomialMarkers()
 {
-  //@todo implement
+    for (size_t i = 0; i < markers_.markers.size(); ++i) {
+    markers_.markers[i].action = visualization_msgs::msg::Marker::DELETE;
+  }
+  polynomial_pub_->publish(markers_);
+}
+
+/**
+ * Main function
+*/
+
+int main(int argc, char * argv[])
+{
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<GoToWaypointNode>());
+  rclcpp::shutdown();
+  return 0;
 }

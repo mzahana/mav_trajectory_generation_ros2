@@ -22,10 +22,12 @@
 #include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 
 #include <mav_trajectory_generation_ros2/msg/polynomial_segment.hpp>
 #include <mav_trajectory_generation_ros2/msg/polynomial_trajectory.hpp>
 #include "mav_trajectory_generation_ros2/eigen_planning_msgs.h"
+#include <mav_trajectory_generation_ros2/eigen_mav_msgs.h>
 
 
 // deprecated
@@ -114,6 +116,9 @@ inline void polynomialTrajectoryMsgFromEigen(
   }
 }
 
+
+
 }  // namespace mav_planning_msgs
+
 
 #endif // MAV_PLANNING_MSGS_CONVERSIONS_H

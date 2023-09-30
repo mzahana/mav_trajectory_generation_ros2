@@ -26,6 +26,7 @@
 #include <iostream>
 
 #include "mav_trajectory_generation_ros2/common.h"
+#include <nav_msgs/msg/odometry.hpp>
 
 namespace mav_msgs {
   
@@ -344,6 +345,25 @@ MAV_MSGS_MAKE_ALIGNED_CONTAINERS(EigenRateThrust)
 MAV_MSGS_MAKE_ALIGNED_CONTAINERS(EigenTrajectoryPoint)
 MAV_MSGS_MAKE_ALIGNED_CONTAINERS(EigenRollPitchYawrateThrust)
 MAV_MSGS_MAKE_ALIGNED_CONTAINERS(EigenOdometry)
-}
+
+inline void eigenOdometryFromMsg(const nav_msgs::msg::Odometry& msg,
+                                 mav_msgs::EigenOdometry* odometry) {
+  assert(odometry != NULL);
+  odometry->timestamp_ns = static_cast<uint64_t>(msg.header.stamp.sec) * 1'000'000'000 + msg.header.stamp.nanosec;
+   
+  
+  odometry->position_W = mav_msgs::vector3FromPointMsg(msg.pose.pose.position);
+  odometry->orientation_W_B =
+      mav_msgs::quaternionFromMsg(msg.pose.pose.orientation);
+  odometry->velocity_B = mav_msgs::vector3FromMsg(msg.twist.twist.linear);
+  odometry->angular_velocity_B =
+      mav_msgs::vector3FromMsg(msg.twist.twist.angular);
+  odometry->pose_covariance_ =
+      Eigen::Map<const Eigen::Matrix<double, 6, 6>>(msg.pose.covariance.data());
+  odometry->twist_covariance_ = Eigen::Map<const Eigen::Matrix<double, 6, 6>>(
+      msg.twist.covariance.data());
+  }
+  
+} // namespace mav_msgs
 
 #endif  // MAV_MSGS_EIGEN_MAV_MSGS_H
