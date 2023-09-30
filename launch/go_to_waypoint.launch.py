@@ -28,7 +28,7 @@ def generate_launch_description():
             package=pkg_name,
             executable='go_to_waypoint_node',
             name='go_to_waypoint_node',
-            namespace='',
+            namespace=LaunchConfiguration('waypoint_node_namespace'),
             parameters=[LaunchConfiguration('config_file')],
             remappings=[
                 ('odom', 'mavros/local_position/odom'),
