@@ -129,7 +129,7 @@ got_odometry_(false)
   waypoint_sub_ = this->create_subscription<mav_trajectory_generation_ros2::msg::Waypoint>(
       "waypoint", 10, std::bind(&GoToWaypointNode::waypointCallback, this, _1));
 
-  path_segments_pub_ = this->create_publisher<mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D>("path_segments", 10);
+  path_segments_pub_ = this->create_publisher<mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D>("path_segments_4D", 10);
   polynomial_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("waypoint_navigator_polynomial_markers", 10);
 
   RCLCPP_INFO(this->get_logger(), "Node has started.");
