@@ -40,6 +40,8 @@ class TrajectorySamplerNode : public rclcpp::Node
 
   void commandTimerCallback();
 
+  void startTimer();
+
   rclcpp::Subscription<mav_trajectory_generation_ros2::msg::PolynomialTrajectory>::SharedPtr trajectory_sub_;
   rclcpp::Subscription<mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D>::SharedPtr trajectory4D_sub_;
 
@@ -47,6 +49,7 @@ class TrajectorySamplerNode : public rclcpp::Node
 
   rclcpp::TimerBase::SharedPtr timer_;
   bool run_timer_;
+  bool timer_is_done_;
 
   // ros::ServiceServer stop_srv_;
   rclcpp::Time start_time_;
@@ -70,6 +73,7 @@ class TrajectorySamplerNode : public rclcpp::Node
 
 TrajectorySamplerNode::TrajectorySamplerNode(): Node("trjectory_sampler_node"),
   run_timer_(false),
+  timer_is_done_(true),
   publish_whole_trajectory_(false),
   dt_(0.01),
   current_sample_time_(0.0)
@@ -87,12 +91,12 @@ TrajectorySamplerNode::TrajectorySamplerNode(): Node("trjectory_sampler_node"),
 
   command_pub_ = this->create_publisher<trajectory_msgs::msg::MultiDOFJointTrajectory>("command/trajectory", 10);
 
-  timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(static_cast<int64_t>(dt_*1000)),
-            std::bind(&TrajectorySamplerNode::commandTimerCallback, this) );
+  // timer_ = this->create_wall_timer(
+  //           std::chrono::milliseconds(static_cast<int64_t>(dt_*1000)),
+  //           std::bind(&TrajectorySamplerNode::commandTimerCallback, this) );
 }
 
-TrajectorySamplerNode::~TrajectorySamplerNode(){ /* Destructor*/}
+TrajectorySamplerNode::~TrajectorySamplerNode(){ timer_->cancel(); }
 
 void TrajectorySamplerNode::pathSegments4DCallback(
       const mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D& segments_message)
@@ -151,16 +155,16 @@ void TrajectorySamplerNode::processTrajectory()
   } else {
     // publish_timer_.start();
     current_sample_time_ = 0.0;
-    run_timer_ = true;
     start_time_ = this->now();
-    
+    startTimer();
+    // run_timer_ = true;    
   }
 }
 
 void TrajectorySamplerNode::commandTimerCallback()
 {
-  if(!run_timer_)
-    return;
+  // if(!run_timer_)
+  //   return;
 
   if (current_sample_time_ <= trajectory_.getMaxTime()) {
     trajectory_msgs::msg::MultiDOFJointTrajectory msg;
@@ -169,7 +173,9 @@ void TrajectorySamplerNode::commandTimerCallback()
         trajectory_, current_sample_time_, &trajectory_point);
     if (!success) {
       // publish_timer_.stop();
-      run_timer_ = false;
+      // run_timer_ = false;
+      timer_->cancel();
+      return;
     }
     mav_planning_msgs::msgMultiDofJointTrajectoryFromEigen(trajectory_point, &msg);
     // Convert time_from_start to seconds and nanoseconds
@@ -183,9 +189,17 @@ void TrajectorySamplerNode::commandTimerCallback()
     
   } else {
     // publish_timer_.stop();
-    run_timer_ = false;
-  }
+    // run_timer_ = false;
+    timer_->cancel();
+    }
 
+}
+
+void TrajectorySamplerNode::startTimer()
+{
+    // Create a timer that triggers after 2 seconds
+    timer_ = this->create_wall_timer(std::chrono::milliseconds(static_cast<int64_t>(dt_*1000)), 
+                                      std::bind(&TrajectorySamplerNode::commandTimerCallback, this));
 }
 
 /**

@@ -39,7 +39,7 @@ def generate_launch_description():
             remappings=[
                 ('path_segments', 'path_segments'),
                 ('path_segments_4D', 'path_segments_4D'),
-                ('command/trajectory', 'command/trajectory'),
+                ('command/trajectory', 'geometric_controller/multi_dof_setpoint'),
             ]
         ),
     ])

@@ -31,7 +31,7 @@ def generate_launch_description():
             namespace=LaunchConfiguration('waypoint_node_namespace'),
             parameters=[LaunchConfiguration('config_file')],
             remappings=[
-                ('odom', 'mavros/local_position/odom'),
+                ('odom', '/mavros/local_position/odom'),
                 ('path_segments', 'path_segments'),
                 ('waypoint_navigator_polynomial_markers', 'waypoint_navigator_polynomial_markers'),
                 ('waypoint', 'waypoint')

@@ -147,10 +147,12 @@ GoToWaypointNode::~GoToWaypointNode() {/* Destructor*/}
 
 void GoToWaypointNode::odometryCallback(const nav_msgs::msg::Odometry& odom_msg)
 {
+  // auto clock = this->get_clock();
+  // RCLCPP_INFO_THROTTLE(this->get_logger(), *clock, 1000, "[GoToWaypointNode::odometryCallback] Got Odometry msg.");
+  mav_msgs::eigenOdometryFromMsg(odom_msg, &odometry_);
   if (!got_odometry_) {
     got_odometry_ = true;
   }
-  mav_msgs::eigenOdometryFromMsg(odom_msg, &odometry_);
 }
 
 void GoToWaypointNode::multiDofCallback(const trajectory_msgs::msg::MultiDOFJointTrajectoryPoint& msg)
@@ -180,12 +182,12 @@ void GoToWaypointNode::multiDofCallback(const trajectory_msgs::msg::MultiDOFJoin
 
   if (heading_mode_ == "zero") {
     vwp.setFromYaw(0.0);
-  } else if (sqrt(pow(msg.transforms[0].translation.x - odometry_.position_W.y(), 2) +
-                  pow(msg.transforms[0].translation.x - odometry_.position_W.x(), 2)) < 0.05) {
+  } else if (sqrt(pow(msg.transforms[0].translation.y - odometry_.position_W.y(), 2) +
+                  pow(msg.transforms[0].translation.x - odometry_.position_W.x(), 2)) < 0.1) {
     vwp.orientation_W_B = odometry_.orientation_W_B;
   } else {
     vwp.setFromYaw(atan2(msg.transforms[0].translation.y - odometry_.position_W.y(),
-                        msg.transforms[0].translation.y - odometry_.position_W.x()));
+                        msg.transforms[0].translation.x - odometry_.position_W.x()));
   }
   coarse_waypoints_.push_back(vwp);
 
@@ -275,7 +277,8 @@ void GoToWaypointNode::createTrajectory()
     // Position.
     if (i == 0 || i == coarse_waypoints_.size() - 1) {
       vertex.makeStartOrEnd(coarse_waypoints_[i].position_W,
-                            mav_trajectory_generation::derivative_order::SNAP);
+                            mav_trajectory_generation::derivative_order::POSITION);
+      
     } else {
       vertex.addConstraint(
           mav_trajectory_generation::derivative_order::POSITION,
