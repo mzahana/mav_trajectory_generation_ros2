@@ -115,6 +115,7 @@ ament_target_dependencies(go_to_waypoint_node
                           nav_msgs
                           geometry_msgs
                           visualization_msgs
+                          trajectory_msgs
                           rclcpp 
                           Eigen3)
 

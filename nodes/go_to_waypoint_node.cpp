@@ -14,6 +14,7 @@
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <mav_trajectory_generation_ros2/msg/waypoint.hpp>
+#include <trajectory_msgs/msg/multi_dof_joint_trajectory_point.hpp>
 
 using namespace std::chrono_literals;
 using std::placeholders::_1;
@@ -89,10 +90,12 @@ private:
 
   void odometryCallback(const nav_msgs::msg::Odometry& odometry_message);
   void waypointCallback(const mav_trajectory_generation_ros2::msg::Waypoint& wp_msg);
+  void multiDofCallback(const trajectory_msgs::msg::MultiDOFJointTrajectoryPoint& msg);
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_sub_;
   rclcpp::Subscription<mav_trajectory_generation_ros2::msg::Waypoint>::SharedPtr waypoint_sub_;
-  
+  rclcpp::Subscription<trajectory_msgs::msg::MultiDOFJointTrajectoryPoint>::SharedPtr multi_dof_wp_sub_;
+    
   rclcpp::Publisher<mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D>::SharedPtr  path_segments_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr polynomial_pub_;
 
@@ -126,8 +129,12 @@ got_odometry_(false)
 
   odometry_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
       "odom", rclcpp::SensorDataQoS(), std::bind(&GoToWaypointNode::odometryCallback, this, _1));
+
   waypoint_sub_ = this->create_subscription<mav_trajectory_generation_ros2::msg::Waypoint>(
       "waypoint", 10, std::bind(&GoToWaypointNode::waypointCallback, this, _1));
+
+  multi_dof_wp_sub_ = this->create_subscription<trajectory_msgs::msg::MultiDOFJointTrajectoryPoint>(
+      "multi_dof_wp", 10, std::bind(&GoToWaypointNode::multiDofCallback, this, _1));
 
   path_segments_pub_ = this->create_publisher<mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D>("path_segments_4D", 10);
   polynomial_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("waypoint_navigator_polynomial_markers", 10);
@@ -144,6 +151,51 @@ void GoToWaypointNode::odometryCallback(const nav_msgs::msg::Odometry& odom_msg)
     got_odometry_ = true;
   }
   mav_msgs::eigenOdometryFromMsg(odom_msg, &odometry_);
+}
+
+void GoToWaypointNode::multiDofCallback(const trajectory_msgs::msg::MultiDOFJointTrajectoryPoint& msg)
+{
+  if (!got_odometry_) {
+    auto clock = this->get_clock();
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *clock, 1000, "[GoToWaypointNode::multiDofCallback] Did no get odometry. Not executing waypoint.");
+    return;
+  }
+
+  coarse_waypoints_.clear();
+  current_leg_ = 0;
+  // timer_counter_ = 0;
+  // command_timer_.stop();
+
+  addCurrentOdometryWaypoint();
+
+  // Add the new waypoint.
+  mav_msgs::EigenTrajectoryPoint vwp;
+  vwp.position_W.x() = msg.transforms[0].translation.x;
+  vwp.position_W.y() = msg.transforms[0].translation.y;
+  vwp.position_W.z() = msg.transforms[0].translation.z;
+  auto acc_vec = mav_msgs::vector3FromMsg(msg.accelerations[0].linear);
+  reference_acceleration_ = acc_vec.norm();
+  auto vel_vec = mav_msgs::vector3FromMsg(msg.velocities[0].linear);
+  reference_speed_ = vel_vec.norm();
+
+  if (heading_mode_ == "zero") {
+    vwp.setFromYaw(0.0);
+  } else if (sqrt(pow(msg.transforms[0].translation.x - odometry_.position_W.y(), 2) +
+                  pow(msg.transforms[0].translation.x - odometry_.position_W.x(), 2)) < 0.05) {
+    vwp.orientation_W_B = odometry_.orientation_W_B;
+  } else {
+    vwp.setFromYaw(atan2(msg.transforms[0].translation.y - odometry_.position_W.y(),
+                        msg.transforms[0].translation.y - odometry_.position_W.x()));
+  }
+  coarse_waypoints_.push_back(vwp);
+
+  // Limit the maximum distance between waypoints.
+  if (intermediate_poses_) {
+    addIntermediateWaypoints();
+  }
+
+  publishCommands();
+  LOG(INFO) << "Going to a new waypoint...";
 }
 
 void GoToWaypointNode::waypointCallback(const mav_trajectory_generation_ros2::msg::Waypoint& wp_msg)
