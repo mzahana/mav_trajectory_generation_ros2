@@ -188,11 +188,11 @@ inline void msgMultiDofJointTrajectoryFromEigen(
   msgMultiDofJointTrajectoryFromEigen(trajectory_point, "base_link", msg);
 }
 
-inline void msgMultiDofJointTrajectoryFromEigen(
-    const mav_msgs::EigenTrajectoryPointVector& trajectory,
-    trajectory_msgs::msg::MultiDOFJointTrajectory* msg) {
-  msgMultiDofJointTrajectoryFromEigen(trajectory, "base_link", msg);
-}
+// inline void msgMultiDofJointTrajectoryFromEigen(
+//     const mav_msgs::EigenTrajectoryPointVector& trajectory,
+//     trajectory_msgs::msg::MultiDOFJointTrajectory* msg) {
+//   msgMultiDofJointTrajectoryFromEigen(trajectory, "base_link", msg);
+// }
 
 }  // namespace mav_planning_msgs
 

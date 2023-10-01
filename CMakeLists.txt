@@ -24,6 +24,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(trajectory_msgs REQUIRED)
 
 find_package(glog REQUIRED)  # <-- Find glog
 
@@ -58,7 +59,7 @@ add_library(${PROJECT_NAME}_lib
   src/rpoly/rpoly_ak1.cpp
   src/ros_conversions.cpp
 )
-ament_target_dependencies(${PROJECT_NAME}_lib yaml_cpp_vendor Eigen3 geometry_msgs nav_msgs)
+ament_target_dependencies(${PROJECT_NAME}_lib yaml_cpp_vendor Eigen3 geometry_msgs trajectory_msgs nav_msgs)
 
 target_include_directories(${PROJECT_NAME}_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
