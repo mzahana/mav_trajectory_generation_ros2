@@ -1,0 +1,4 @@
+trjectory_sampler_node:
+  ros__parameters:
+    publish_whole_trajectory: false
+    command_frequency: 0.01

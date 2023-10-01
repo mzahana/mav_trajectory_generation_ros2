@@ -123,14 +123,41 @@ target_include_directories(go_to_waypoint_node
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
-rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
-target_link_libraries(go_to_waypoint_node ${cpp_typesupport_target})
+rosidl_get_typesupport_target(cpp_typesupport_waypoint_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(go_to_waypoint_node ${cpp_typesupport_waypoint_target})
 
 
 install(TARGETS
   go_to_waypoint_node
   DESTINATION lib/${PROJECT_NAME}
 )
+
+#
+# trajectory_sampler node
+#
+add_executable(trajectory_sampler_node nodes/trajectory_sampler_node.cpp)
+ament_target_dependencies(trajectory_sampler_node
+                          nav_msgs
+                          geometry_msgs
+                          trajectory_msgs
+                          visualization_msgs
+                          rclcpp 
+                          Eigen3)
+
+target_link_libraries(trajectory_sampler_node ${PROJECT_NAME}_lib)
+target_include_directories(trajectory_sampler_node
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+rosidl_get_typesupport_target(cpp_typesupport_sampler_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(trajectory_sampler_node ${cpp_typesupport_sampler_target})
+
+
+install(TARGETS
+trajectory_sampler_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 
 
 ###########################

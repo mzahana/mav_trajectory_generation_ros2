@@ -74,6 +74,12 @@ TrajectorySamplerNode::TrajectorySamplerNode(): Node("trjectory_sampler_node"),
   dt_(0.01),
   current_sample_time_(0.0)
 {
+  this->declare_parameter("publish_whole_trajectory", false);
+  publish_whole_trajectory_ = this->get_parameter("publish_whole_trajectory").get_parameter_value().get<bool>();
+
+  this->declare_parameter("command_frequency", 0.01);
+  dt_ = this->get_parameter("command_frequency").get_parameter_value().get<double>();
+
   trajectory_sub_ = this->create_subscription<mav_trajectory_generation_ros2::msg::PolynomialTrajectory>(
       "path_segments", rclcpp::SensorDataQoS(), std::bind(&TrajectorySamplerNode::pathSegmentsCallback, this, _1)); 
   trajectory4D_sub_ = this->create_subscription<mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D>(
@@ -180,4 +186,16 @@ void TrajectorySamplerNode::commandTimerCallback()
     run_timer_ = false;
   }
 
+}
+
+/**
+ * Main function
+*/
+
+int main(int argc, char * argv[])
+{
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<TrajectorySamplerNode>());
+  rclcpp::shutdown();
+  return 0;
 }
