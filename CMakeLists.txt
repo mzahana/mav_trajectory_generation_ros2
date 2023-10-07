@@ -22,6 +22,9 @@ find_package(eigen3_cmake_module REQUIRED)
 
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(trajectory_msgs REQUIRED)
 
 find_package(glog REQUIRED)  # <-- Find glog
 
@@ -35,6 +38,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Waypoint.msg"
   DEPENDENCIES std_msgs geometry_msgs builtin_interfaces # Add packages that above messages depend on, in this case geometry_msgs for Sphere.msg
 )
+include_directories(
+  ${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_cpp
+)
+
 
 # If you have other ROS 2 dependencies, find them here:
 # find_package(dependency_name REQUIRED)
@@ -50,17 +57,18 @@ add_library(${PROJECT_NAME}_lib
   src/vertex.cpp
   src/io.cpp
   src/rpoly/rpoly_ak1.cpp
+  src/ros_conversions.cpp
 )
-ament_target_dependencies(${PROJECT_NAME}_lib yaml_cpp_vendor Eigen3 geometry_msgs)
+ament_target_dependencies(${PROJECT_NAME}_lib yaml_cpp_vendor Eigen3 geometry_msgs trajectory_msgs nav_msgs)
 
 target_include_directories(${PROJECT_NAME}_lib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${EIGEN3_INCLUDE_DIR}
+  rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
 )
-
 # Link against glog
-target_link_libraries(${PROJECT_NAME}_lib glog::glog)  # <-- Link glog
+target_link_libraries(${PROJECT_NAME}_lib glog::glog ${cpp_typesupport_target})  # <-- Link glog
 
 # Executables
 add_executable(polynomial_timing_evaluation
@@ -99,5 +107,71 @@ install(DIRECTORY include/
   DESTINATION include
 )
 
+#
+# go_to_waypoint node
+#
+add_executable(go_to_waypoint_node nodes/go_to_waypoint_node.cpp)
+ament_target_dependencies(go_to_waypoint_node
+                          nav_msgs
+                          geometry_msgs
+                          visualization_msgs
+                          trajectory_msgs
+                          rclcpp 
+                          Eigen3)
+
+target_link_libraries(go_to_waypoint_node ${PROJECT_NAME}_lib)
+target_include_directories(go_to_waypoint_node
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+rosidl_get_typesupport_target(cpp_typesupport_waypoint_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(go_to_waypoint_node ${cpp_typesupport_waypoint_target})
+
+
+install(TARGETS
+  go_to_waypoint_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+#
+# trajectory_sampler node
+#
+add_executable(trajectory_sampler_node nodes/trajectory_sampler_node.cpp)
+ament_target_dependencies(trajectory_sampler_node
+                          nav_msgs
+                          geometry_msgs
+                          trajectory_msgs
+                          visualization_msgs
+                          rclcpp 
+                          Eigen3)
+
+target_link_libraries(trajectory_sampler_node ${PROJECT_NAME}_lib)
+target_include_directories(trajectory_sampler_node
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+rosidl_get_typesupport_target(cpp_typesupport_sampler_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(trajectory_sampler_node ${cpp_typesupport_sampler_target})
+
+
+install(TARGETS
+trajectory_sampler_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+
+
+###########################
+# Install launch files
+install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}/
+)
+
+# Install config files
+install(DIRECTORY config
+  DESTINATION share/${PROJECT_NAME}/
+)
+
+##############################
 
 ament_package()

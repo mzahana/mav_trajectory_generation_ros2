@@ -11,4 +11,13 @@ This is a ROS 2 version of the original [mav_trajectory_generation](https://gith
 You can see the dependecies in the [package.xml](package.xml) file.
 
 # Nodes
-To be done.
+
+## go_to_waypoint_node
+### Subscribers
+* `odom` topic. Message type `nav_msgs::msg::Odometry`. This is the current odometry of the mav.
+* `waypoint`. Message type `mav_trajectory_generation_ros2::msg::Waypoint`. The desired waypoint. This is a custom message [Waypoint.msg](msg/Waypoint.msg)
+
+### Publishers
+* `path_segments`. Message type `mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D`. Custom message [PolynomialTrajectory4D.msg](msg/PolynomialTrajectory4D.msg). Publishes the generate trajectory segments which is consumed by a trajectory sampler.
+
+* `waypoint_navigator_polynomial_markers`. Message type `visualization_msgs::msg::MarkerArray`. Publishes markers to visualize the path segments in RViz2.

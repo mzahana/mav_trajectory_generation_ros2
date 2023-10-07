@@ -1,0 +1,6 @@
+go_to_waypoint_node:
+  ros__parameters:
+    # 'auto', 'zero'
+    heading_mode: "zero"
+    intermediate_poses: true
+    intermediate_pose_separation: 1.0
