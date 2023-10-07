@@ -34,7 +34,8 @@ def generate_launch_description():
                 ('odom', '/mavros/local_position/odom'),
                 ('path_segments', 'path_segments'),
                 ('waypoint_navigator_polynomial_markers', 'waypoint_navigator_polynomial_markers'),
-                ('waypoint', 'waypoint')
+                ('waypoint', 'waypoint'),
+                ('command/trajectory', 'geometric_controller/multi_dof_setpoint')
             ]
         ),
     ])

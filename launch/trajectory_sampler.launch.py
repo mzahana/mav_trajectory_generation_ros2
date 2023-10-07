@@ -40,6 +40,7 @@ def generate_launch_description():
                 ('path_segments', 'path_segments'),
                 ('path_segments_4D', 'path_segments_4D'),
                 ('command/trajectory', 'geometric_controller/multi_dof_setpoint'),
+                ('odom', 'mavros/local_position/odom')
             ]
         ),
     ])

@@ -15,6 +15,8 @@
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <mav_trajectory_generation_ros2/msg/waypoint.hpp>
 #include <trajectory_msgs/msg/multi_dof_joint_trajectory_point.hpp>
+#include <trajectory_msgs/msg/multi_dof_joint_trajectory.hpp>
+#include <mav_trajectory_generation_ros2/trajectory_sampling.h>
 
 using namespace std::chrono_literals;
 using std::placeholders::_1;
@@ -66,12 +68,15 @@ private:
   // A list of waypoints to visit.
   // [x,y,z,heading]
   std::vector<mav_msgs::EigenTrajectoryPoint> coarse_waypoints_;
+  std::vector<mav_msgs::EigenTrajectoryPoint> reduced_coarse_waypoints_;
 
   // Path vertices and segments.
   mav_trajectory_generation::Trajectory polynomial_trajectory_;
   mav_trajectory_generation::Vertex::Vector polynomial_vertices_;
   mav_trajectory_generation::Trajectory yaw_trajectory_;
   mav_trajectory_generation::Vertex::Vector yaw_vertices_;
+
+  trajectory_msgs::msg::MultiDOFJointTrajectory multi_dof_msg_;
 
   // Interpolates intermediate points between waypoints in a sequence.
   void addIntermediateWaypoints();
@@ -81,9 +86,13 @@ private:
 
   // Creates and optimizes a smooth polynomial trajectory from a waypoint list.
   void createTrajectory();
+  void createReducedTrajectory();
 
   // Starts sending execution commands to the controller.
   void publishCommands();
+
+  // Publishes the last trajectory sample constructed from reduced_coarse_waypoints_
+  void publishTrajectorySample();
 
   // Deletes old polynomial trajectory markers.
   void deletePolynomialMarkers();
@@ -98,6 +107,7 @@ private:
     
   rclcpp::Publisher<mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D>::SharedPtr  path_segments_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr polynomial_pub_;
+  rclcpp::Publisher<trajectory_msgs::msg::MultiDOFJointTrajectory>::SharedPtr command_pub_;
 
 };
 
@@ -138,6 +148,8 @@ got_odometry_(false)
 
   path_segments_pub_ = this->create_publisher<mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D>("path_segments_4D", 10);
   polynomial_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("waypoint_navigator_polynomial_markers", 10);
+  command_pub_ = this->create_publisher<trajectory_msgs::msg::MultiDOFJointTrajectory>("command/trajectory", 10);
+  
 
   RCLCPP_INFO(this->get_logger(), "Node has started.");
 
@@ -157,18 +169,29 @@ void GoToWaypointNode::odometryCallback(const nav_msgs::msg::Odometry& odom_msg)
 
 void GoToWaypointNode::multiDofCallback(const trajectory_msgs::msg::MultiDOFJointTrajectoryPoint& msg)
 {
+  auto clock = this->get_clock();
   if (!got_odometry_) {
-    auto clock = this->get_clock();
     RCLCPP_WARN_THROTTLE(this->get_logger(), *clock, 1000, "[GoToWaypointNode::multiDofCallback] Did no get odometry. Not executing waypoint.");
     return;
   }
+
+  // Make sure it is a new waypoint (new either in position OR heading)
+  // For now, just comparing position
+  Eigen::Vector3d des_pos = Eigen::Vector3d(msg.transforms[0].translation.x,
+                                            msg.transforms[0].translation.y,
+                                            msg.transforms[0].translation.z);
+
 
   coarse_waypoints_.clear();
   current_leg_ = 0;
   // timer_counter_ = 0;
   // command_timer_.stop();
 
-  addCurrentOdometryWaypoint();
+  double d = (odometry_.position_W - des_pos).norm();
+  if (d > kWaypointAchievementDistance)
+  {
+    addCurrentOdometryWaypoint();
+  }
 
   // Add the new waypoint.
   mav_msgs::EigenTrajectoryPoint vwp;
@@ -196,7 +219,29 @@ void GoToWaypointNode::multiDofCallback(const trajectory_msgs::msg::MultiDOFJoin
     addIntermediateWaypoints();
   }
 
-  publishCommands();
+  // @todo 
+  // crete trajectroy
+  // Sample the trajectroy at the maximum time => corresponding to the lsat wp
+  // publish the traj. point as multidofjoint for the ocntroller to consume
+
+  // update reduced_coarse_waypoints_ to have only the current wp (initial) and next one from coarse_waypoints_, ignore the rest, if there is any
+  if(coarse_waypoints_.size() < 2)
+  {
+    RCLCPP_WARN(this->get_logger(), "Goal is too close");
+    // just pubish the last point
+    // auto clock = this->get_clock();
+    RCLCPP_WARN(this->get_logger(), " Publishing last command");
+    command_pub_->publish(multi_dof_msg_);
+    return;
+  }
+  reduced_coarse_waypoints_.resize(2);
+  reduced_coarse_waypoints_.clear();
+  reduced_coarse_waypoints_.push_back(coarse_waypoints_[0]);
+  reduced_coarse_waypoints_.push_back(coarse_waypoints_[1]);
+
+
+  // publishCommands();
+  publishTrajectorySample();
   LOG(INFO) << "Going to a new waypoint...";
 }
 
@@ -246,6 +291,32 @@ void GoToWaypointNode::waypointCallback(const mav_trajectory_generation_ros2::ms
   
 }
 
+void GoToWaypointNode::publishTrajectorySample()
+{
+  createReducedTrajectory();
+  // Publish the trajectory point to the controller
+  mav_trajectory_generation::Trajectory traj_with_yaw;
+  polynomial_trajectory_.getTrajectoryWithAppendedDimension(yaw_trajectory_,
+                                                            &traj_with_yaw);
+  // trajectory_msgs::msg::MultiDOFJointTrajectory multi_dof_msg;
+  mav_msgs::EigenTrajectoryPoint trajectory_point;
+
+  bool success = mav_trajectory_generation::sampleTrajectoryAtTime(
+        traj_with_yaw, traj_with_yaw.getMaxTime(), &trajectory_point);
+  if (!success)
+    return;
+
+  mav_planning_msgs::msgMultiDofJointTrajectoryFromEigen(trajectory_point, &multi_dof_msg_);
+  // Convert time_from_start to seconds and nanoseconds
+  int64_t seconds = static_cast<int64_t>(traj_with_yaw.getMaxTime());
+  int64_t nanoseconds = static_cast<int64_t>((traj_with_yaw.getMaxTime() - seconds) * 1e9);
+  multi_dof_msg_.points[0].time_from_start.sec = seconds;
+  multi_dof_msg_.points[0].time_from_start.nanosec = nanoseconds;
+
+
+  command_pub_->publish(multi_dof_msg_);
+}
+
 void GoToWaypointNode::publishCommands()
 {
 
@@ -277,7 +348,7 @@ void GoToWaypointNode::createTrajectory()
     // Position.
     if (i == 0 || i == coarse_waypoints_.size() - 1) {
       vertex.makeStartOrEnd(coarse_waypoints_[i].position_W,
-                            mav_trajectory_generation::derivative_order::POSITION);
+                            kDerivativeToOptimize);
       
     } else {
       vertex.addConstraint(
@@ -327,8 +398,93 @@ void GoToWaypointNode::createTrajectory()
   yaw_opt.getTrajectory(&yaw_trajectory_);
 }
 
+void GoToWaypointNode::createReducedTrajectory()
+{
+  polynomial_vertices_.clear();
+  polynomial_trajectory_.clear();
+  yaw_vertices_.clear();
+  yaw_trajectory_.clear();
+  deletePolynomialMarkers();
+
+  // NOTE: We expect reduced_coarse_waypoints_ to have only two waypoints
+  if (reduced_coarse_waypoints_.size() != 2)
+  {
+    RCLCPP_WARN(this->get_logger(), "reduced_coarse_waypoints_ size must be exactly 2. reduced_coarse_waypoints_ size = %d", static_cast<int>( reduced_coarse_waypoints_.size()) );
+    return;
+  }
+
+  mav_trajectory_generation::Vertex vertex(kDimensions);
+  mav_trajectory_generation::Vertex yaw(1);
+
+  // WP 0
+  vertex.makeStartOrEnd(reduced_coarse_waypoints_[0].position_W,
+                            kDerivativeToOptimize);
+  polynomial_vertices_.push_back(vertex);
+
+  // WP 1
+  // if (coarse_waypoints_.size() == reduced_coarse_waypoints_.size()) // It's the end goal
+  // {
+  //   vertex.makeStartOrEnd(reduced_coarse_waypoints_[1].position_W,
+  //                           kDerivativeToOptimize);
+  // }
+  // else // it is intermediate!
+  // {
+  //   vertex.addConstraint(
+  //         mav_trajectory_generation::derivative_order::POSITION,
+  //         reduced_coarse_waypoints_[1].position_W);
+  // }
+  vertex.makeStartOrEnd(reduced_coarse_waypoints_[1].position_W,
+                            kDerivativeToOptimize);
+  polynomial_vertices_.push_back(vertex);
+
+  // yaw
+  // Check whether to rotate clockwise or counter-clockwise in yaw.
+  double yaw_mod = fmod(
+      reduced_coarse_waypoints_[1].getYaw() - reduced_coarse_waypoints_[0].getYaw(),
+      2 * M_PI);
+  if (yaw_mod < -M_PI) {
+    yaw_mod += 2 * M_PI;
+  } else if (yaw_mod > M_PI) {
+    yaw_mod -= 2 * M_PI;
+  }
+  reduced_coarse_waypoints_[1].setFromYaw(reduced_coarse_waypoints_[0].getYaw() +
+                                  yaw_mod);
+  // YAW of WP 0
+  yaw.addConstraint(mav_trajectory_generation::derivative_order::ORIENTATION,
+                      reduced_coarse_waypoints_[0].getYaw());
+  yaw_vertices_.push_back(yaw);
+  // Yaw of WP 1
+  yaw.addConstraint(mav_trajectory_generation::derivative_order::ORIENTATION,
+                      reduced_coarse_waypoints_[1].getYaw());
+  yaw_vertices_.push_back(yaw);
+
+  // Optimize the polynomial trajectory.
+  // Position.
+  std::vector<double> segment_times;
+  segment_times =
+      estimateSegmentTimes(polynomial_vertices_, reference_speed_,
+                           reference_acceleration_);
+
+  mav_trajectory_generation::PolynomialOptimization<kPolynomialCoefficients>
+      opt(kDimensions);
+  opt.setupFromVertices(polynomial_vertices_, segment_times,
+                        kDerivativeToOptimize);
+  opt.solveLinear();
+  opt.getTrajectory(&polynomial_trajectory_);
+  // Yaw.
+  mav_trajectory_generation::PolynomialOptimization<kPolynomialCoefficients>
+      yaw_opt(1);
+  yaw_opt.setupFromVertices(yaw_vertices_, segment_times,
+                            kDerivativeToOptimize);
+  yaw_opt.solveLinear();
+  yaw_opt.getTrajectory(&yaw_trajectory_);
+}
+
 void GoToWaypointNode::addIntermediateWaypoints()
 {
+  if(coarse_waypoints_.size() < 2)
+    return;
+
   for (size_t i = 1; i < coarse_waypoints_.size(); ++i) {
     mav_msgs::EigenTrajectoryPoint wpa = coarse_waypoints_[i - 1];
     mav_msgs::EigenTrajectoryPoint wpb = coarse_waypoints_[i];

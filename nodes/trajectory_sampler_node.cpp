@@ -15,6 +15,8 @@
 #include <mav_trajectory_generation_ros2/trajectory_sampling.h>
 #include <mav_trajectory_generation_ros2/ros_conversions.h>
 
+#include <geometry_msgs/msg/point.hpp>
+
 // deprecated
 #include <mav_trajectory_generation_ros2/msg/polynomial_segment4_d.hpp>
 #include <mav_trajectory_generation_ros2/msg/polynomial_trajectory4_d.hpp>
@@ -40,16 +42,24 @@ class TrajectorySamplerNode : public rclcpp::Node
 
   void commandTimerCallback();
 
+  void odomCallback(const nav_msgs::msg::Odometry& msg);
+
   void startTimer();
 
   rclcpp::Subscription<mav_trajectory_generation_ros2::msg::PolynomialTrajectory>::SharedPtr trajectory_sub_;
   rclcpp::Subscription<mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D>::SharedPtr trajectory4D_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
 
   rclcpp::Publisher<trajectory_msgs::msg::MultiDOFJointTrajectory>::SharedPtr command_pub_;
 
   rclcpp::TimerBase::SharedPtr timer_;
   bool run_timer_;
-  bool timer_is_done_;
+
+  // This to keep publishing the lsat sample in the trajectory
+  // to prevent the controller from timing out.
+  // So the drone does not drift, when the controller times out,
+  // and does not publish commands to the lower level dorne contorllers
+  bool hold_last_sample_;
 
   // ros::ServiceServer stop_srv_;
   rclcpp::Time start_time_;
@@ -67,22 +77,28 @@ class TrajectorySamplerNode : public rclcpp::Node
 
   // The trajectory to sub-sample.
   mav_trajectory_generation::Trajectory trajectory_;
+
+  Eigen::Vector3d current_position_;
 };
 
 /////////////////////// Class definition ////////////////////////
 
 TrajectorySamplerNode::TrajectorySamplerNode(): Node("trjectory_sampler_node"),
   run_timer_(false),
-  timer_is_done_(true),
+  hold_last_sample_(true),
   publish_whole_trajectory_(false),
   dt_(0.01),
-  current_sample_time_(0.0)
+  current_sample_time_(0.0),
+  current_position_(Eigen::Vector3d::Zero())
 {
   this->declare_parameter("publish_whole_trajectory", false);
   publish_whole_trajectory_ = this->get_parameter("publish_whole_trajectory").get_parameter_value().get<bool>();
 
   this->declare_parameter("command_frequency", 0.01);
   dt_ = this->get_parameter("command_frequency").get_parameter_value().get<double>();
+
+  this->declare_parameter("hold_last_sample", true);
+  hold_last_sample_ = this->get_parameter("hold_last_sample").get_parameter_value().get<bool>();
 
   trajectory_sub_ = this->create_subscription<mav_trajectory_generation_ros2::msg::PolynomialTrajectory>(
       "path_segments", rclcpp::SensorDataQoS(), std::bind(&TrajectorySamplerNode::pathSegmentsCallback, this, _1)); 
@@ -91,12 +107,22 @@ TrajectorySamplerNode::TrajectorySamplerNode(): Node("trjectory_sampler_node"),
 
   command_pub_ = this->create_publisher<trajectory_msgs::msg::MultiDOFJointTrajectory>("command/trajectory", 10);
 
+  odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+      "odom", rclcpp::SensorDataQoS(), std::bind(&TrajectorySamplerNode::odomCallback, this, _1));
+
   // timer_ = this->create_wall_timer(
   //           std::chrono::milliseconds(static_cast<int64_t>(dt_*1000)),
   //           std::bind(&TrajectorySamplerNode::commandTimerCallback, this) );
 }
 
 TrajectorySamplerNode::~TrajectorySamplerNode(){ timer_->cancel(); }
+
+void TrajectorySamplerNode::odomCallback(const nav_msgs::msg::Odometry& msg)
+{
+  current_position_(0) = msg.pose.pose.position.x;
+  current_position_(1) = msg.pose.pose.position.y;
+  current_position_(2) = msg.pose.pose.position.z;
+}
 
 void TrajectorySamplerNode::pathSegments4DCallback(
       const mav_trajectory_generation_ros2::msg::PolynomialTrajectory4D& segments_message)
@@ -166,9 +192,11 @@ void TrajectorySamplerNode::commandTimerCallback()
   // if(!run_timer_)
   //   return;
 
+  trajectory_msgs::msg::MultiDOFJointTrajectory msg;
+  mav_msgs::EigenTrajectoryPoint trajectory_point;
   if (current_sample_time_ <= trajectory_.getMaxTime()) {
-    trajectory_msgs::msg::MultiDOFJointTrajectory msg;
-    mav_msgs::EigenTrajectoryPoint trajectory_point;
+    // trajectory_msgs::msg::MultiDOFJointTrajectory msg;
+    // mav_msgs::EigenTrajectoryPoint trajectory_point;
     bool success = mav_trajectory_generation::sampleTrajectoryAtTime(
         trajectory_, current_sample_time_, &trajectory_point);
     if (!success) {
@@ -185,13 +213,41 @@ void TrajectorySamplerNode::commandTimerCallback()
     msg.points[0].time_from_start.nanosec = nanoseconds;
 
     command_pub_->publish(msg);
-    current_sample_time_ += dt_;
+    if( (trajectory_point.position_W - current_position_).norm() < 0.1 )
+      current_sample_time_ += dt_;
     
-  } else {
-    // publish_timer_.stop();
-    // run_timer_ = false;
-    timer_->cancel();
+  }
+  else 
+  {
+    if(!hold_last_sample_){ timer_->cancel(); return ;}
+    bool success = mav_trajectory_generation::sampleTrajectoryAtTime(
+        trajectory_, trajectory_.getMaxTime(), &trajectory_point);
+    if (!success) {
+      // publish_timer_.stop();
+      // run_timer_ = false;
+      timer_->cancel();
+      return;
     }
+    mav_planning_msgs::msgMultiDofJointTrajectoryFromEigen(trajectory_point, &msg);
+    // Convert time_from_start to seconds and nanoseconds
+    int64_t seconds = static_cast<int64_t>(trajectory_.getMaxTime());
+    int64_t nanoseconds = static_cast<int64_t>((trajectory_.getMaxTime() - seconds) * 1e9);
+    msg.points[0].time_from_start.sec = seconds;
+    msg.points[0].time_from_start.nanosec = nanoseconds;
+
+    auto clock = this->get_clock();
+    RCLCPP_INFO_THROTTLE(this->get_logger(), *clock, 1000, "[TrajectorySamplerNode] Holding last sample.");
+    msg.points[0].accelerations[0].linear.x=0.0;
+    msg.points[0].accelerations[0].linear.y=0.0;
+    msg.points[0].accelerations[0].linear.z=0.0;
+    msg.points[0].velocities[0].linear.x=0.0;
+    msg.points[0].velocities[0].linear.y=0.0;
+    msg.points[0].velocities[0].linear.z=0.0;
+    msg.points[0].velocities[0].angular.x = 0.0;
+    msg.points[0].velocities[0].angular.y = 0.0;
+    msg.points[0].velocities[0].angular.z = 0.0;
+    command_pub_->publish(msg);    
+  }
 
 }
 
